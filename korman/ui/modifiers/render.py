@@ -55,9 +55,9 @@ def lighting(modifier, layout, context):
     layout.separator()
 
     lightmap = modifier.id_data.plasma_modifiers.lightmap
+    is_aomapped = lightmap.enabled and lightmap.bake_aomap
+    is_lightmapped = lightmap.enabled and lightmap.bake_lightmap
     have_static_lights = lightmap.enabled or modifier.preshade
-    def yes_no(val):
-        return "Yes" if val else "No"
 
     col = layout.column(align=True)
     col.label("Plasma Lighting Summary:")
@@ -71,34 +71,59 @@ def lighting(modifier, layout, context):
     col.label("Other Plasma lights {} be cast at runtime.".format("will" if modifier.rt_lights else "will NOT"),
               icon="LAYER_USED")
 
-    if lightmap.enabled and lightmap.light_group:
-            col.label(" All '{}' lights will be baked to a lightmap".format(lightmap.light_group),
+    if is_aomapped:
+        col.label("Ambient lighting will be baked into an AOmap", icon="LAYER_USED")
+    else:
+        col.label("Ambient lighting will NOT be baked into an AOmap", icon="LAYER_USED")
+
+    if is_lightmapped and lightmap.light_group:
+            col.label("All '{}' lights will be baked to a lightmap".format(lightmap.light_group),
                       icon="LAYER_USED")
     elif have_static_lights:
         light_type = "Blender-only" if modifier.rt_lights else "unanimated"
-        map_type = "a lightmap" if lightmap.enabled else "vertex colors"
+        map_type = "a lightmap" if is_lightmapped else "vertex colors"
         col.label("Other {} lights will be baked to {}.".format(light_type, map_type), icon="LAYER_USED")
     else:
         col.label("No static lights will be baked.", icon="LAYER_USED")
 
 def lightmap(modifier, layout, context):
-    layout.row(align=True).prop(modifier, "quality", expand=True)
-    layout.prop(modifier, "render_layers", text="Active Render Layers")
-    layout.prop_search(modifier, "light_group", bpy.data, "groups", icon="GROUP")
-    layout.prop_search(modifier, "uv_map", context.active_object.data, "uv_textures")
+    split = layout.split()
+    col = split.column()
+    col.prop(modifier, "bake_lightmap")
+    col.prop(modifier, "bake_aomap")
+    col = split.column()
+    col.label("Quality:")
+    col.prop(modifier, "quality", text="")
+    layout.separator()
 
+    col = layout.column()
+    col.active = modifier.bake_lightmap or modifier.bake_aomap
+    col.prop(modifier, "render_layers", text="Active Render Layers")
+    col.separator()
+    col.separator()
+
+    row = col.row()
+    row.active = modifier.bake_lightmap
+    row.prop_search(modifier, "light_group", bpy.data, "groups", icon="GROUP")
+    col.prop_search(modifier, "uv_map", context.active_object.data, "uv_textures")
     operator = layout.operator("object.plasma_lightmap_preview", "Preview Lightmap", icon="RENDER_STILL")
-    operator.light_group = modifier.light_group
 
     # Kind of clever stuff to show the user a preview...
     # We can't show images, so we make a hidden ImageTexture called LIGHTMAPGEN_PREVIEW. We check
     # the backing image name to see if it's for this lightmap. If so, you have a preview. If not,
     # well... It was nice knowing you!
-    tex = bpy.data.textures.get("LIGHTMAPGEN_PREVIEW")
-    if tex is not None and tex.image is not None:
-        im_name = "{}_LIGHTMAPGEN.png".format(context.active_object.name)
-        if tex.image.name == im_name:
-            layout.template_preview(tex, show_buttons=False)
+    def _show_preview(layout, context, preview_type):
+        tex = bpy.data.textures.get("{}_PREVIEW".format(preview_type))
+        print(tex.name)
+        if tex is not None and tex.image is not None:
+            im_name = "{}_{}.png".format(context.active_object.name, preview_type)
+            if tex.image.name == im_name:
+                row.template_preview(tex, show_buttons=False)
+
+    row = layout.row(align=True)
+    _show_preview(row, context, "LIGHTMAPGEN")
+    _show_preview(row, context, "AOMAPGEN")
+
 
 def viewfacemod(modifier, layout, context):
     layout.prop(modifier, "preset_options")

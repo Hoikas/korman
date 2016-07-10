@@ -28,13 +28,13 @@ class LightBaker:
         self._lightgroups = {}
         self._uvtexs = {}
 
-    def _apply_render_settings(self, toggle, vcols):
+    def _apply_render_settings(self, toggle, vcols, bake_type):
         render = bpy.context.scene.render
         toggle.track(render, "use_textures", False)
         toggle.track(render, "use_shadows", True)
         toggle.track(render, "use_envmaps", False)
         toggle.track(render, "use_raytrace", True)
-        toggle.track(render, "bake_type", "FULL")
+        toggle.track(render, "bake_type", bake_type)
         toggle.track(render, "use_bake_clear", True)
         toggle.track(render, "use_bake_to_vertex_color", vcols)
 
@@ -45,18 +45,26 @@ class LightBaker:
         for i in uvtex.data:
             i.image = im
 
+    def _bake_aomaps(self, objs, layers):
+        with GoodNeighbor() as toggle:
+            scene = bpy.context.scene
+            scene.layers = layers
+            self._apply_render_settings(toggle, False, "AO")
+            self._select_only(objs, toggle)
+            bpy.ops.object.bake_image()
+
     def _bake_lightmaps(self, objs, layers):
         with GoodNeighbor() as toggle:
             scene = bpy.context.scene
             scene.layers = layers
-            self._apply_render_settings(toggle, False)
+            self._apply_render_settings(toggle, False, "FULL")
             self._select_only(objs, toggle)
             bpy.ops.object.bake_image()
 
     def _bake_vcols(self, objs):
         with GoodNeighbor() as toggle:
             bpy.context.scene.layers = (True,) * _NUM_RENDER_LAYERS
-            self._apply_render_settings(toggle, True)
+            self._apply_render_settings(toggle, True, "FULL")
             self._select_only(objs, toggle)
             bpy.ops.object.bake_image()
 
@@ -81,37 +89,34 @@ class LightBaker:
         #           This prevents context operators from phailing.
         bpy.context.scene.layers = (True,) * _NUM_RENDER_LAYERS
 
-        # Step 1: Prepare... Apply UVs, etc, etc, etc
-        print("    Preparing to bake...")
-        for key in bake.keys():
-            if key[0] == "lightmap":
-                for i in range(len(bake[key])-1, -1, -1):
-                    obj = bake[key][i]
-                    if not self._prep_for_lightmap(obj, toggle):
-                        print("        Lightmap '{}' will not be baked -- no applicable lights".format(obj.name))
-                        bake[key].pop(i)
-            elif key[0] == "vcol":
-                for i in range(len(bake[key])-1, -1, -1):
-                    obj = bake[key][i]
-                    if not self._prep_for_vcols(obj, toggle):
-                        if self._has_valid_material(obj):
-                            print("        VCols '{}' will not be baked -- no applicable lights".format(obj.name))
-                        bake[key].pop(i)
-            else:
-                raise RuntimeError(key[0])
-        print("    ...")
-
-        # Step 2: BAKE!
         for key, value in bake.items():
-            if not value:
-                continue
+            if key[0] == "aomap":
+                for i in range(len(value)-1, -1, -1):
+                    obj = value[i]
+                    if not self._prep_aomap(obj, toggle):
+                        value.pop(i)
 
-            if key[0] == "lightmap":
-                print("    {} Lightmap(s) [H:{:X}]".format(len(value), hash(key)))
-                self._bake_lightmaps(value, key[1:])
+                if value:
+                    print("    {} AOmap(s) [H:{:X}]".format(len(value), hash(key)))
+                    self._bake_aomaps(value, key[1:])
+            elif key[0] == "lightmap":
+                for i in range(len(value)-1, -1, -1):
+                    obj = value[i]
+                    if not self._prep_lightmap(obj, toggle):
+                        value.pop(i)
+
+                if value:
+                    print("    {} Lightmap(s) [H:{:X}]".format(len(value), hash(key)))
+                    self._bake_lightmaps(value, key[1:])
             elif key[0] == "vcol":
-                print("    {} Crap Light(s)".format(len(value)))
-                self._bake_vcols(value)
+                for i in range(len(value)-1, -1, -1):
+                    obj = value[i]
+                    if not self._prep_vcols(obj, toggle):
+                        value.pop(i)
+
+                if value:
+                    print("    {} Crappy Vertex Light(s)".format(len(value)))
+                    self._bake_vcols(value)
             else:
                 raise RuntimeError(key[0])
 
@@ -187,11 +192,19 @@ class LightBaker:
 
             mods = i.plasma_modifiers
             if mods.lightmap.enabled:
-                key = ("lightmap",) + tuple(mods.lightmap.render_layers)
-                if key in bake:
-                    bake[key].append(i)
-                else:
-                    bake[key] = [i,]
+                layers = tuple(mods.lightmap.render_layers)
+                if mods.lightmap.bake_lightmap:
+                    key = ("lightmap",) + layers
+                    if key in bake:
+                        bake[key].append(i)
+                    else:
+                        bake[key] = [i,]
+                if mods.lightmap.bake_aomap:
+                    key = ("aomap", ) + layers
+                    if key in bake:
+                        bake[key].append(i)
+                    else:
+                        bake[key] = [i,]
             elif mods.lighting.preshade:
                 vcols = i.data.vertex_colors
                 for j in _VERTEX_COLOR_LAYERS:
@@ -213,18 +226,17 @@ class LightBaker:
                 i.user_clear()
                 bpy.data.groups.remove(i)
 
-    def _prep_for_lightmap(self, bo, toggle):
-        mesh = bo.data
-        modifier = bo.plasma_modifiers.lightmap
-        uv_textures = mesh.uv_textures
+    def _prep_aomap(self, bo, toggle):
+        im = self._prep_image_texture(bo, "AOMAPGEN")
+        self._prep_uvtexture(bo, im, toggle)
+        return True
 
-        # Create a special light group for baking
-        if not self._generate_lightgroup(bo, modifier.light_group):
-            return False
+    def _prep_image_texture(self, bo, suffix):
+        modifier = bo.plasma_modifiers.lightmap
 
         # We need to ensure that we bake onto the "BlahObject_LIGHTMAPGEN" image
         data_images = bpy.data.images
-        im_name = "{}_LIGHTMAPGEN.png".format(bo.name)
+        im_name = "{}_{}.png".format(bo.name, suffix)
         size = modifier.resolution
 
         im = data_images.get(im_name)
@@ -235,6 +247,27 @@ class LightBaker:
             im.user_clear()
             data_images.remove(im)
             im = data_images.new(im_name, width=size, height=size)
+
+        # Indicate we should bake
+        return im
+
+    def _prep_lightmap(self, bo, toggle):
+        # Create a special light group for baking
+        if not self._generate_lightgroup(bo, bo.plasma_modifiers.lightmap.light_group):
+            return False
+        im = self._prep_image_texture(bo, "LIGHTMAPGEN")
+        self._prep_uvtexture(bo, im, toggle)
+        return True
+
+    def _prep_uvtexture(self, bo, im, toggle):
+        mesh = bo.data
+        uv_textures = mesh.uv_textures
+
+        # This is required for both AO and Light maps, so we should ensure it only happens once...
+        if mesh.name in self._uvtexs:
+            uvtex = uv_textures["LIGHTMAPGEN"]
+            self._associate_image_with_uvtex(uvtex, im)
+            return
 
         # If there is a cached LIGHTMAPGEN uvtexture, nuke it
         uvtex = uv_textures.get("LIGHTMAPGEN", None)
@@ -254,7 +287,7 @@ class LightBaker:
         # this tended to create sharp edges. There was already a discussion about this on the
         # Guild of Writers forum, so I'm implementing a code version of dendwaler's process,
         # as detailed here: https://forum.guildofwriters.org/viewtopic.php?p=62572#p62572
-        uv_base = self._get_lightmap_uvtex(mesh, modifier)
+        uv_base = self._get_lightmap_uvtex(mesh, bo.plasma_modifiers.lightmap)
         if uv_base is not None:
             uv_textures.active = uv_base
             # this will copy the UVs to the new UV texture
@@ -284,10 +317,7 @@ class LightBaker:
             i.active = value
             i.active_render = value
 
-        # Indicate we should bake
-        return True
-
-    def _prep_for_vcols(self, bo, toggle):
+    def _prep_vcols(self, bo, toggle):
         mesh = bo.data
         vcols = mesh.vertex_colors
 

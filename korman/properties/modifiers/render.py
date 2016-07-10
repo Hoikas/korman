@@ -140,16 +140,17 @@ class PlasmaLightMapGen(PlasmaModifierProperties):
     pl_id = "lightmap"
 
     bl_category = "Render"
-    bl_label = "Lightmap"
-    bl_description = "Auto-Bake Lightmap"
+    bl_label = "Bake Lighting"
+    bl_description = "Auto-Bake Lightmap and/or AO"
 
     quality = EnumProperty(name="Quality",
                            description="Resolution of lightmap",
-                           items=[
+                           items=[("64", "64px", "64x64 pixels"),
                                   ("128", "128px", "128x128 pixels"),
                                   ("256", "256px", "256x256 pixels"),
                                   ("512", "512px", "512x512 pixels"),
                                   ("1024", "1024px", "1024x1024 pixels"),
+                                  ("2048", "2048px", "2048x2048 pixels"),
                             ])
 
     render_layers = BoolVectorProperty(name="Layers",
@@ -165,15 +166,19 @@ class PlasmaLightMapGen(PlasmaModifierProperties):
     uv_map = StringProperty(name="UV Texture",
                             description="UV Texture used as the basis for the lightmap")
 
-    def export(self, exporter, bo, so):
-        lightmap_im = bpy.data.images.get("{}_LIGHTMAPGEN.png".format(bo.name))
+    bake_lightmap = BoolProperty(name="Bake Lightmap",
+                                 description="Bake lights to a lightmap texture",
+                                 default=True,
+                                 options=set())
+    bake_aomap = BoolProperty(name="Bake Ambient Occlusion",
+                              description="Bake ambient occlusion to a texture",
+                              default=False,
+                              options=set())
 
-        # If no lightmap image is found, then either lightmap generation failed (error raised by oven)
-        # or baking is turned off. Either way, bail out.
-        if lightmap_im is None:
-            return
-        mat_mgr = exporter.mesh.material
-        materials = mat_mgr.get_materials(bo)
+    def export(self, exporter, bo, so):
+        aomap_im = bpy.data.images.get("{}_AOMAPGEN.png".format(bo.name))
+        lightmap_im = bpy.data.images.get("{}_LIGHTMAPGEN.png".format(bo.name))
+        materials = exporter.mesh.material.get_materials(bo)
 
         # Find the stupid UVTex
         uvw_src = 0
@@ -185,28 +190,39 @@ class PlasmaLightMapGen(PlasmaModifierProperties):
             # TODO: raise exception
             pass
 
+        # Export prepared layers
+        aomap_key = self._export_light_layer(exporter, so, uvw_src, aomap_im, "AOMAPGEN")
+        lightmap_key = self._export_light_layer(exporter, so, uvw_src, lightmap_im, "LIGHTMAPGEN")
+
         for matKey in materials:
-            layer = exporter.mgr.add_object(plLayer, name="{}_LIGHTMAPGEN".format(matKey.name), so=so)
-            layer.UVWSrc = uvw_src
+            material = matKey.object
+            if lightmap_key is not None:
+                material.addPiggyBack(lightmap_key)
+            if aomap_key is not None:
+                material.addPiggyBack(aomap_key)
 
-            # Colors science'd from PRPs
-            layer.ambient = hsColorRGBA(1.0, 1.0, 1.0)
-            layer.preshade = hsColorRGBA(0.5, 0.5, 0.5)
-            layer.runtime = hsColorRGBA(0.5, 0.5, 0.5)
+    def _export_light_layer(self, exporter, so, uvw_src, image, suffix):
+        if image is None:
+            return None
 
-            # GMatState
-            gstate = layer.state
-            gstate.blendFlags |= hsGMatState.kBlendMult
-            gstate.clampFlags |= (hsGMatState.kClampTextureU | hsGMatState.kClampTextureV)
-            gstate.ZFlags |= hsGMatState.kZNoZWrite
-            gstate.miscFlags |= hsGMatState.kMiscLightMap
+        layer = exporter.mgr.add_object(plLayer, name="{}_{}".format(so.key.name, suffix), so=so)
+        layer.UVWSrc = uvw_src
 
-            mat = matKey.object
-            mat.compFlags |= hsGMaterial.kCompIsLightMapped
-            mat.addPiggyBack(layer.key)
+        # Colors science'd from PRPs
+        layer.ambient = hsColorRGBA(1.0, 1.0, 1.0)
+        layer.preshade = hsColorRGBA(0.5, 0.5, 0.5)
+        layer.runtime = hsColorRGBA(0.5, 0.5, 0.5)
 
-            # Mmm... cheating
-            mat_mgr.export_prepared_layer(layer, lightmap_im)
+        # GMatState
+        gstate = layer.state
+        gstate.blendFlags |= hsGMatState.kBlendMult
+        gstate.clampFlags |= (hsGMatState.kClampTextureU | hsGMatState.kClampTextureV)
+        gstate.ZFlags |= hsGMatState.kZNoZWrite
+        gstate.miscFlags |= hsGMatState.kMiscLightMap
+
+        # Mmm... cheating
+        exporter.mesh.material.export_prepared_layer(layer, image)
+        return layer.key
 
     @property
     def key_name(self):

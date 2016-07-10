@@ -17,10 +17,8 @@ import bpy
 from bpy.props import *
 
 from ..exporter.etlight import LightBaker
-from ..helpers import GoodNeighbor
 
 class _LightingOperator:
-
     @classmethod
     def poll(cls, context):
         if context.object is not None:
@@ -29,27 +27,31 @@ class _LightingOperator:
 
 class LightmapAutobakePreviewOperator(_LightingOperator, bpy.types.Operator):
     bl_idname = "object.plasma_lightmap_preview"
-    bl_label = "Preview Lightmap"
+    bl_label = "Preview Baked Lighting"
     bl_options = {"INTERNAL"}
-
-    light_group = StringProperty(name="Light Group")
 
     def __init__(self):
         super().__init__()
 
     def execute(self, context):
-        with GoodNeighbor() as toggle:
-            toggle.track(context.scene, "layers", tuple(context.scene.layers))
-
+        try:
+            _layers = tuple(context.scene.layers)
             bake = LightBaker()
             if not bake.bake_static_lighting([context.active_object,]):
                 self.report({"INFO"}, "No valid lights found to bake.")
                 return {"FINISHED"}
+        finally:
+            context.scene.layers = _layers
 
-        tex = bpy.data.textures.get("LIGHTMAPGEN_PREVIEW")
-        if tex is None:
-            tex = bpy.data.textures.new("LIGHTMAPGEN_PREVIEW", "IMAGE")
-        tex.extension = "CLIP"
-        tex.image = bpy.data.images["{}_LIGHTMAPGEN.png".format(context.active_object.name)]
-
+        self._prepare_preview(context, "LIGHTMAPGEN")
+        self._prepare_preview(context, "AOMAPGEN")
         return {"FINISHED"}
+
+    def _prepare_preview(self, context, preview_type):
+        tex_name = "{}_PREVIEW".format(preview_type)
+        tex = bpy.data.textures.get(tex_name)
+        if tex is None:
+            tex = bpy.data.textures.new(tex_name, "IMAGE")
+        tex.extension = "CLIP"
+        tex.image = bpy.data.images.get("{}_{}.png".format(context.active_object.name, preview_type))
+
