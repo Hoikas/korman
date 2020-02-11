@@ -13,6 +13,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with Korman.  If not, see <http://www.gnu.org/licenses/>.
 
+import bmesh
 import bpy
 from bpy.props import *
 from PyHSPlasma import *
@@ -277,21 +278,31 @@ class PlasmaSoftVolume(idprops.IDPropMixin, PlasmaModifierProperties):
 
         # Initialize the plVolumeIsect. Currently, we only support convex isects. If you want parallel
         # isects from empties, be my guest...
-        with TemporaryObject(bo.to_mesh(bpy.context.scene, True, "RENDER", calc_tessface=False), bpy.data.meshes.remove) as mesh:
+        with TemporaryObject(bo.to_mesh(bpy.context.scene, True, "RENDER", calc_tessface=False), bpy.data.meshes.remove) as editmesh:
             matrix = bo.matrix_world
-            #l2w = utils.matrix44(matrix)
             xform = matrix.inverted()
             xform.transpose()
 
-            isect = plConvexIsect()
-            for ngon in mesh.polygons:
-                normal = xform * ngon.normal * -1
-                normal.normalize()
-                normal = hsVector3(*normal)
-                for vertex in (mesh.vertices[i] for i in ngon.vertices):
-                    pos = matrix * vertex.co
-                    isect.addPlane(normal, hsVector3(*pos))
-            sv.volume = isect
+            try:
+                # Ensure the normals always point inward
+                # bmesh.from_edit_mesh requires we enter edit mode *sigh*
+                mesh = bmesh.new()
+                mesh.from_mesh(editmesh)
+                # same thing that bpy.ops.normals_make_consistent(inside=True) does
+                bmesh.ops.recalc_face_normals(mesh, faces=mesh.faces)
+                bmesh.ops.reverse_faces(mesh, faces=mesh.faces, flip_multires=True)
+
+                isect = plConvexIsect()
+                for ngon in mesh.faces:
+                    normal = xform * ngon.normal * -1
+                    normal.normalize()
+                    normal = hsVector3(*normal)
+                    for vertex in ngon.verts:
+                        pos = matrix * vertex.co
+                        isect.addPlane(normal, hsVector3(*pos))
+                sv.volume = isect
+            finally:
+                mesh.free()
 
     def _export_sv_nodes(self, exporter, bo, so):
         tree = self.get_node_tree()
