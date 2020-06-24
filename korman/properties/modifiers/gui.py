@@ -389,10 +389,10 @@ class PlasmaLinkingBookModifier(PlasmaModifierProperties, PlasmaModifierLogicWiz
     # Link Info
     link_type = EnumProperty(name="Linking Type",
                              description="The type of Link this Linking Book will use",
-                             items=[
-                                 ("kBasicLink", "Public Link", "Links to a public instance of the specified Age"),
-                                 ("kOriginalBook", "Private Link", "Links to a new or existing private instance of the specified Age"),
-                                 ("kSubAgeBook", "Closed Loop Link", "Links between instances of the specifed Age and the current one"),],
+                             items=[("kBasicLink", "Public Link", "Links to a public instance of the specified Age"),
+                                    ("kOriginalBook", "Private Link", "Links to a new or existing private instance of the specified Age"),
+                                    ("kSubAgeBook", "Closed Loop Link", "Links between instances of the specifed Age and the current one"),
+                                   ],
                              options=set(),
                              default="kOriginalBook")
     age_name = StringProperty(name="Age Name",
