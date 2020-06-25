@@ -1,0 +1,130 @@
+name: Windows-CI
+
+on: [push, pull_request]
+
+env:
+  CMAKE_GENERATOR: Visual Studio 16 2019
+  python-version: 3.7
+
+jobs:
+  build-korman:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x86, x64]
+    env:
+      vcpkg-triplet: ${{ matrix.arch }}-windows-static-md
+
+    steps:
+      # Build libHSPlasma and Korman dependencies
+      - name: Bootstrap vcpkg
+        id: bootstrap-vcpkg
+        run: |
+          cd C:\vcpkg
+          git pull
+          Write-Host "::set-output name=vcpkg-rev::$(git rev-parse HEAD)"
+          ./bootstrap-vcpkg.bat
+      - name: Bootstrap Dependencies
+        run: |
+          Add-Content -Path vcpkg.txt libjpeg-turbo
+          Add-Content -Path vcpkg.txt libogg
+          Add-Content -Path vcpkg.txt libpng
+          Add-Content -Path vcpkg.txt libvorbis
+          Add-Content -Path vcpkg.txt string-theory
+          Add-Content -Path vcpkg.txt zlib
+      - name: Restore Dependency Cache
+        id: cache-vcpkg
+        uses: actions/cache@v1
+        with:
+          path: C:\vcpkg\installed
+          key: |
+            build-korman vcpkg-triplet=${{ env.vcpkg-triplet }} vcpkg-response=${{ hashFiles('vcpkg.txt') }} vcpkg-rev=${{ steps.bootstrap-vcpkg.outputs.vcpkg-rev }}
+          restore-keys: |
+            build-korman vcpkg-triplet=${{ env.vcpkg-triplet }} vcpkg-response=${{ hashFiles('vcpkg.txt') }}
+            build-korman vcpkg-triplet=${{ env.vcpkg-triplet }}
+      - name: Upgrade Dependencies
+        if: steps.cache-vcpkg.outputs.cache-hit == 'true'
+        run: |
+          vcpkg update
+          vcpkg upgrade --no-dry-run --triplet ${{ env.vcpkg-triplet }}
+      - name: Build Dependencies
+        run: |
+          vcpkg install `@vcpkg.txt --triplet ${{ env.vcpkg-triplet }}
+          vcpkg list --x-full-desc
+
+      # Prepare Python
+      - name: Install Python
+        uses: actions/setup-python@v2
+        with:
+          architecture: ${{ matrix.arch }}
+          python-version: ${{ env.python-version }}
+      - name: Find Python Artifacts
+        run: |
+          $python_lib = "python$("${{ env.python-version }}"[0])$("${{ env.python-version }}"[2]).lib"
+          $python_libd = "python$("${{ env.python-version }}"[0])$("${{ env.python-version }}"[2])_d.lib"
+          Write-Host ::set-env name=PYTHON_EXECUTABLE::${{ env.pythonLocation }}\python.exe
+          Write-Host ::set-env name=PYTHON_LIB::${{ env.pythonLocation }}\libs\$python_lib
+          Write-Host ::set-env name=PYTHON_LIBD::${{ env.pythonLocation }}\libs\$python_libd
+          Write-Host ::set-env name=PYTHON_INCLUDE::${{ env.pythonLocation }}\include
+
+      # Fix cmake's stupid ass
+      - name: Configure Platform Arch
+        run: |
+          if ("${{ matrix.arch }}" -eq "x86") {
+            Write-Host "::set-env name=CMAKE_GENERATOR_PLATFORM::Win32"
+          } else {
+            Write-Host "::set-env name=CMAKE_GENERATOR_PLATFORM::${{ matrix.arch }}"
+          }
+
+      # Build HSPlasma
+      - name: Checkout libHSPlasma
+        uses: actions/checkout@v2
+        with:
+          path: libhsplasma
+          repository: H-uru/libhsplasma
+      - name: Build libHSPlasma
+        run: |
+          mkdir -p libhsplasma\build && cd libhsplasma\build
+          cmake `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=${{ env.vcpkg-triplet }} `
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\install `
+            -DENABLE_PYTHON=ON -DENABLE_TOOLS=OFF -DENABLE_NET=OFF -DENABLE_PHYSX=OFF `
+            -DPYTHON_EXECUTABLE=${{ env.PYTHON_EXECUTABLE }} `
+            -DPYTHON_DEBUG_LIBRARY=${{ env.PYTHON_LIBD }} `
+            -DPYTHON_LIBRARY=${{ env.PYTHON_LIB }} `
+            -DPYTHON_INCLUDE_DIR=${{ env.PYTHON_INCLUDE }} ..
+          cmake --build . --config Release -j 2
+          cmake --build . --config Release --target INSTALL
+
+      # Build Korlib
+      - name: Checkout Korman
+        uses: actions/checkout@v2
+        with:
+          path: korman
+      - name: Build Korlib
+        run: |
+          cd korman\korlib && mkdir build && cd build
+          cmake `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=${{ env.vcpkg-triplet }} `
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\install `
+            -DPYTHON_EXECUTABLE=${{ env.PYTHON_EXECUTABLE }} `
+            -DPYTHON_DEBUG_LIBRARY=${{ env.PYTHON_LIBD }} `
+            -DPYTHON_LIBRARY=${{ env.PYTHON_LIB }} `
+            -DPYTHON_INCLUDE_DIR=${{ env.PYTHON_INCLUDE }} ..
+          cmake --build . --config Release -j 2
+          cmake --build . --config Release --target INSTALL
+
+      # Move artifacts into a Blender-ish structure and upload
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p artifacts\python\site-packages
+          Copy-Item -Path "install\bin\*" -Destination "artifacts\python\site-packages"
+          mkdir -p artifacts\scripts\addons\korman
+          Copy-Item -Path "korman\korman\*" -Destination "artifacts\scripts\addons\korman" -Recurse
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: korman-${{ runner.os }}-${{ matrix.arch }}
+          path: artifacts
