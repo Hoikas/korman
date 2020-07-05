@@ -128,3 +128,56 @@ jobs:
         with:
           name: korman-${{ runner.os }}-${{ matrix.arch }}
           path: artifacts
+
+  build-blender:
+    runs-on: windows-latest
+    ##needs: build-korman
+    strategy:
+      matrix:
+        arch: [x86, x64]
+    env:
+      vcpkg-triplet: ${{ matrix.arch }}-windows-static-md
+
+    steps:
+      - name: Configure Platform Arch
+        run: |
+          if ("${{ matrix.arch }}" -eq "x86") {
+            Write-Host "::set-env name=CMAKE_GENERATOR_PLATFORM::Win32"
+            Write-Host "::set-env name=BLENDER_LIBRARIES::windows_vc14"
+            Write-Host "::set-env name=BLENDER_SVN_REV::62271"
+          } else {
+            Write-Host "::set-env name=CMAKE_GENERATOR_PLATFORM::${{ matrix.arch }}"
+            Write-Host "::set-env name=BLENDER_LIBRARIES::win64_vc14"
+            Write-Host "::set-env name=BLENDER_SVN_REV::62390"
+          }
+
+      - name: Checkout Blender2.7x
+        uses: actions/checkout@v2
+        with:
+          repository: Hoikas/blender2.7
+          path: blender
+      - name: Restore Blender Library Cache
+        id: cache-blender-svn
+        uses: actions/cache@v2
+        with:
+          path: bf-blender-libs
+          key: bf-blender ${{ env.BLENDER_LIBRARIES }} ${{ env.BLENDER_SVN_REV }}
+      - name: Checkout Blender Libraries
+        if:  steps.cache-blender-svn.outputs.cache-hit == 'false'
+        run: |
+          svn checkout `
+            https://svn.blender.org/svnroot/bf-blender/trunk/lib/${{ env.BLENDER_LIBRARIES }}@${{ env.BLENDER_SVN_REV }} `
+            bf-blender-libs
+
+      # TODO: restore korman artifacts into the blender tree
+
+      - name: Build Blender
+        run:
+          mkdir build && cd build
+          cmake `
+            -DCPACK_BINARY_7Z=OFF -DCPACK_BINARY_IFW=OFF -DCPACK_BINARY_NSIS=OFF `
+            -DCPACK_BINARY_NUGET=OFF -DCPACK_BINARY_WIX=ON -DCPACK_BINARY_ZIP=ON `
+            -DCPACK_SOURCE_7Z=OFF -DCPACK_SOURCE_ZIP=OFF `
+            ${{ github.workspace }}\blender
+          cmake --build . --config Release -j 2
+          cmake --build . --config Release -j 2 --target PACKAGE
