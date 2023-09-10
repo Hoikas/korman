@@ -102,9 +102,10 @@ class _GameGuiMixin:
 
 class PlasmaGameGuiControlModifier(PlasmaModifierProperties, _GameGuiMixin):
     pl_id = "gui_control"
+    pl_page_types = {"gui"}
 
     bl_category = "GUI"
-    bl_label = "Ex: Game GUI Control"
+    bl_label = "GUI Control (ex)"
     bl_description = "XXX"
 
     tag_id = IntProperty(
@@ -310,9 +311,10 @@ class GameGuiAnimationGroup(bpy.types.PropertyGroup):
 class PlasmaGameGuiButtonModifier(PlasmaModifierProperties, _GameGuiMixin):
     pl_id = "gui_button"
     pl_depends = {"gui_control"}
+    pl_page_types = {"gui"}
 
     bl_category = "GUI"
-    bl_label = "Ex: Game GUI Button"
+    bl_label = "GUI Button (ex)"
     bl_description = "XXX"
 
     def _update_notify_type(self, context):
@@ -392,9 +394,10 @@ class PlasmaGameGuiButtonModifier(PlasmaModifierProperties, _GameGuiMixin):
 
 class PlasmaGameGuiDialogModifier(PlasmaModifierProperties, _GameGuiMixin):
     pl_id = "gui_dialog"
+    pl_page_types = {"gui"}
 
     bl_category = "GUI"
-    bl_label = "Ex: Game GUI Dialog"
+    bl_label = "GUI Dialog (ex)"
     bl_description = "XXX"
 
     camera_object: bpy.types.Object = PointerProperty(

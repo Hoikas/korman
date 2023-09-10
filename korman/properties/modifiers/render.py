@@ -39,6 +39,7 @@ class PlasmaBlendOntoObject(bpy.types.PropertyGroup):
 
 class PlasmaBlendMod(PlasmaModifierProperties):
     pl_id = "blend"
+    pl_page_types = {"gui", "room"}
 
     bl_category = "Render"
     bl_label = "Blending"
@@ -551,6 +552,7 @@ class PlasmaLightMapGen(idprops.IDPropMixin, PlasmaModifierProperties, PlasmaMod
 
 class PlasmaLightingMod(PlasmaModifierProperties):
     pl_id = "lighting"
+    pl_page_types = {"gui", "room"}
 
     bl_category = "Render"
     bl_label = "Lighting Info"
@@ -640,6 +642,7 @@ _LOCALIZED_TEXT_PFM = (
 
 class PlasmaLocalizedTextModifier(PlasmaModifierProperties, PlasmaModifierLogicWiz, TranslationMixin):
     pl_id = "dynatext"
+    pl_page_types = {"gui", "room"}
 
     bl_category = "Render"
     bl_label = "Localized Text"
